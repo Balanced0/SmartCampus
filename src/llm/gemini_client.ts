@@ -2,6 +2,21 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { DirectiveInterpretation } from '../types';
 import { SYSTEM_PROMPT, buildUserPrompt } from './prompts';
 
+/**
+ * Strip markdown code fences from LLM output.
+ * Even with responseMimeType: 'application/json', some model versions
+ * occasionally wrap their output in ```json ... ```. JSON.parse would
+ * throw on that, so we strip fences before parsing.
+ */
+function stripMarkdownFences(text: string): string {
+  let cleaned = text.trim();
+  // Remove opening fence like ```json or ```
+  cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '');
+  // Remove closing fence
+  cleaned = cleaned.replace(/\n?```\s*$/,  '');
+  return cleaned.trim();
+}
+
 const CANDIDATE_MODELS = [
   process.env.GEMINI_MODEL,
   'gemini-2.5-flash',
@@ -70,7 +85,7 @@ export async function interpretOperatorNotes(
         continue;
       }
 
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(stripMarkdownFences(text));
       if (!Array.isArray(parsed)) {
         console.warn(`[LLM] Response from ${modelName} is not a JSON array. Trying next model.`);
         continue;

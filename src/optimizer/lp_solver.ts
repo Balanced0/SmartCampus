@@ -215,20 +215,29 @@ function formatSolution(
   initialEnergy: number
 ): SolvedPlan {
   const hourlyPlan: HourlyPlanItem[] = [];
-  let prevSoc = initialEnergy;
+
+  // We recompute SOC step-by-step from the rounded charge/discharge values
+  // rather than trusting the LP's raw floating-point soc variable.
+  // Why: The LP returns values like charge=5.00001 which we round to 5.0,
+  // but the LP's internal SOC was computed from the unrounded value.
+  // If we used the LP's SOC directly, battery_energy_after_kwh would drift
+  // from what the battery_kwh and battery_action fields actually say happened.
+  let computedSoc = initialEnergy;
 
   for (let h = 0; h < 24; h++) {
     const rawGrid = solution[`grid_${h}`] || 0;
     const rawSolar = solution[`solar_${h}`] || 0;
     const rawCharge = solution[`charge_${h}`] || 0;
     const rawDischarge = solution[`discharge_${h}`] || 0;
-    const rawSoc = solution[`soc_${h}`] !== undefined ? solution[`soc_${h}`] : prevSoc;
 
     const gridKwh = Math.max(0, roundTo(rawGrid, 4));
     const solarUsedKwh = Math.max(0, roundTo(rawSolar, 4));
     const chargeKwh = Math.max(0, roundTo(rawCharge, 4));
     const dischargeKwh = Math.max(0, roundTo(rawDischarge, 4));
 
+    // Determine the net battery action.
+    // The LP uses separate charge/discharge variables (both >= 0).
+    // We collapse them into a single action + magnitude for the output.
     let action: 'charge' | 'discharge' | 'idle' = 'idle';
     let batteryKwh = 0;
 
@@ -240,8 +249,13 @@ function formatSolution(
       batteryKwh = roundTo(dischargeKwh - chargeKwh, 4);
     }
 
-    const socKwh = roundTo(rawSoc, 4);
-    prevSoc = socKwh;
+    // Recompute SOC from the rounded values so the output is self-consistent:
+    // soc_after = soc_before + charge - discharge
+    if (action === 'charge') {
+      computedSoc = roundTo(computedSoc + batteryKwh, 4);
+    } else if (action === 'discharge') {
+      computedSoc = roundTo(computedSoc - batteryKwh, 4);
+    }
 
     hourlyPlan.push({
       hour: h,
@@ -249,7 +263,7 @@ function formatSolution(
       solar_used_kwh: solarUsedKwh,
       battery_action: action,
       battery_kwh: batteryKwh,
-      battery_energy_after_kwh: socKwh,
+      battery_energy_after_kwh: computedSoc,
     });
   }
 

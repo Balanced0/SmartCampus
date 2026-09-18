@@ -1,4 +1,4 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction, ErrorRequestHandler } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import routes from './routes';
@@ -18,10 +18,15 @@ app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
 
-// Global error handler
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[Unhandled Error]:', err?.message || err);
+// Global error handler.
+// Express 4 identifies error middleware by the 4-parameter (err, req, res, next)
+// signature. Using the ErrorRequestHandler type ensures TypeScript doesn't
+// silently break that contract.
+const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error('[Unhandled Error]:', message);
   res.status(500).json({ error: 'Internal server error' });
-});
+};
+app.use(errorHandler);
 
 export default app;
