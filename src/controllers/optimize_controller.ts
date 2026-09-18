@@ -19,8 +19,11 @@ export async function optimizeEnergy(req: Request, res: Response): Promise<void>
 
     const energyRequest = validation.data;
 
-    // 2. LLM Interpretation (Gemini API with timeout & fallback)
-    const rawDirectives = await interpretOperatorNotes(energyRequest.operator_notes);
+    // 2. LLM Interpretation (Gemini API with hedging & regex fallback)
+    const rawDirectives = await interpretOperatorNotes(
+      energyRequest.operator_notes,
+      energyRequest.battery.capacity_kwh
+    );
 
     // 3. Guardrail Validation & Sanitization
     const sanitizedDirectives = validateAndSanitizeDirectives(

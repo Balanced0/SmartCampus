@@ -232,29 +232,30 @@ function formatSolution(
 
     const gridKwh = Math.max(0, roundTo(rawGrid, 4));
     const solarUsedKwh = Math.max(0, roundTo(rawSolar, 4));
-    const chargeKwh = Math.max(0, roundTo(rawCharge, 4));
-    const dischargeKwh = Math.max(0, roundTo(rawDischarge, 4));
 
-    // Determine the net battery action.
-    // The LP uses separate charge/discharge variables (both >= 0).
-    // We collapse them into a single action + magnitude for the output.
+    // Net simultaneous charge/discharge into one direction (LP epsilon artifact fix).
+    // Zero the smaller value so only one direction is non-zero.
+    let netCharge = Math.max(0, rawCharge - rawDischarge);
+    let netDischarge = Math.max(0, rawDischarge - rawCharge);
+    netCharge = Math.max(0, roundTo(netCharge, 4));
+    netDischarge = Math.max(0, roundTo(netDischarge, 4));
+
     let action: 'charge' | 'discharge' | 'idle' = 'idle';
     let batteryKwh = 0;
 
-    if (chargeKwh > 1e-3 && chargeKwh >= dischargeKwh) {
+    if (netCharge > 1e-6) {
       action = 'charge';
-      batteryKwh = roundTo(chargeKwh - dischargeKwh, 4);
-    } else if (dischargeKwh > 1e-3 && dischargeKwh > chargeKwh) {
+      batteryKwh = roundTo(netCharge, 6); // 6 decimal precision as required
+    } else if (netDischarge > 1e-6) {
       action = 'discharge';
-      batteryKwh = roundTo(dischargeKwh - chargeKwh, 4);
+      batteryKwh = roundTo(netDischarge, 6);
     }
 
-    // Recompute SOC from the rounded values so the output is self-consistent:
-    // soc_after = soc_before + charge - discharge
+    // Recompute SOC from net values so the output is always self-consistent.
     if (action === 'charge') {
-      computedSoc = roundTo(computedSoc + batteryKwh, 4);
+      computedSoc = roundTo(computedSoc + batteryKwh, 6);
     } else if (action === 'discharge') {
-      computedSoc = roundTo(computedSoc - batteryKwh, 4);
+      computedSoc = roundTo(computedSoc - batteryKwh, 6);
     }
 
     hourlyPlan.push({
@@ -263,7 +264,7 @@ function formatSolution(
       solar_used_kwh: solarUsedKwh,
       battery_action: action,
       battery_kwh: batteryKwh,
-      battery_energy_after_kwh: computedSoc,
+      battery_energy_after_kwh: roundTo(computedSoc, 6),
     });
   }
 

@@ -1,231 +1,210 @@
-# Smart Campus Energy Optimizer API
+# GridWise LLM — Energy Optimization API
 
-A high-performance, stateless HTTP backend service for optimal 24-hour campus energy scheduling. The service combines Google Gemini LLM for unstructured operator note interpretation, deterministic guardrails for directive validation, and Linear Programming (`javascript-lp-solver`) to minimize electricity costs while satisfying grid caps, solar curtailment, and battery state-of-charge constraints.
+**BUP CSE Fest 2026 · Hackathon Preliminary**
 
-Designed for instant deployment on **Vercel Serverless Functions** with a **Docker container** fallback.
+A **stateless HTTP API** that interprets natural-language operator notes with Google Gemini LLM, validates them through deterministic guardrails, and runs a 24-hour battery/grid cost optimizer using Linear Programming.
 
----
-
-## Architecture & Pipeline
-
-```
-┌────────────────────────────────────────────────────────┐
-│ Incoming Request (Scenario, 24h Data, Battery, Notes)  │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│ 1. Request Validator (Zod Schema Validation)           │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│ 2. LLM Interpreter (Gemini 1.5 Flash API)              │
-│    - Batched prompt parsing operator notes             │
-│    - Structured JSON generation                        │
-│    - Graceful fallback on API error/timeout            │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│ 3. Guardrail Validator (Deterministic Rule Enforcement) │
-│    - 6 strict directive types                          │
-│    - Sorted, unique hour windows (0-23)                │
-│    - Non-negative bounds & valid reduction factors     │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│ 4. LP Optimizer (javascript-lp-solver)                 │
-│    - 24-hour Linear Program cost minimization          │
-│    - Hourly energy balance & SOC transitions           │
-│    - Battery limits & End-of-day neutrality           │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│ 5. Final Validator & Metric Recomputation              │
-│    - Replays hourly plan & validates bounds            │
-│    - Computes total cost, grid peak, and plan summary  │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│ Response Payload (200 OK JSON)                         │
-└────────────────────────────────────────────────────────┘
-```
+Live deployment: **https://smart-campus-seven-hazel.vercel.app**
 
 ---
 
-## Project Structure
+## Quickstart
 
-```
-smart-campus/
-├── api/
-│   └── index.ts                 # Vercel Serverless Function entry point
-├── src/
-│   ├── app.ts                   # Express app setup and middleware
-│   ├── controllers/
-│   │   ├── health_controller.ts # GET /health handler
-│   │   └── optimize_controller.ts# POST /optimize-energy pipeline handler
-│   ├── guardrails/
-│   │   ├── index.ts
-│   │   ├── request_validator.ts # Zod schema for request validation (400 on error)
-│   │   └── validator.ts         # Deterministic sanitization of LLM directives
-│   ├── llm/
-│   │   ├── index.ts
-│   │   ├── gemini_client.ts     # GoogleGenerativeAI client with timeout & fallback
-│   │   └── prompts.ts           # System prompt & directive format specification
-│   ├── optimizer/
-│   │   ├── index.ts
-│   │   ├── lp_solver.ts         # 24-hour Linear Programming model & solver
-│   │   └── plan_validator.ts    # Replay validator & summary generator
-│   ├── routes/
-│   │   └── index.ts             # Express route definitions
-│   ├── types/
-│   │   ├── energy.ts            # Shared TypeScript domain interfaces
-│   │   └── index.ts
-│   └── utils/
-│       ├── hour_helpers.ts      # Hour array sorting & sanitization
-│       └── tolerance.ts         # Floating point precision & rounding helpers
-├── index.ts                     # Root entry (local listener / export)
-├── vercel.json                  # Vercel routing configuration
-├── Dockerfile                   # Multi-stage production container build
-├── tsconfig.json                # TypeScript compiler configuration
-├── .env.example                 # Environment variables template
-├── package.json
-└── README.md
-```
-
----
-
-## Quickstart & Local Development
-
-### 1. Prerequisites
-- Node.js 20+
-- npm 9+
-- (Optional) Google Gemini API Key
-
-### 2. Setup Environment
 ```bash
-cp .env.example .env
-```
-Edit `.env` to include your Gemini API key:
-```env
-PORT=3000
-GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-1.5-flash
-```
-
-### 3. Install Dependencies & Run
-```bash
-# Install dependencies
+git clone <repo-url>
+cd smart-campus
 npm install
-
-# Start local development server with hot reloading
-npm run dev
+cp .env.example .env
+# Set GEMINI_API_KEY and GEMINI_MODEL=gemini-3.5-flash in .env
+npm run dev         # http://localhost:3000
 ```
 
-The service will start listening on `http://localhost:3000`.
+### Environment Variables
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `GEMINI_API_KEY` | **Yes** | — | Google Gemini API key |
+| `GEMINI_MODEL` | No | `gemini-3.5-flash` | Primary LLM model name |
+| `PORT` | No | `3000` | Local server port |
+| `NODE_ENV` | No | `development` | Controls `app.listen()` guard |
 
 ---
 
-## API Endpoints & Testing
+## API Endpoints
 
-### 1. Health Check
+### GET /health
+
 ```bash
-curl -X GET http://localhost:3000/health
+curl https://smart-campus-seven-hazel.vercel.app/health
 ```
-**Response (200 OK):**
+
+Response:
 ```json
-{
-  "status": "ok"
-}
+{ "status": "ok" }
 ```
 
-### 2. Energy Optimization
+### POST /optimize-energy
+
 ```bash
-curl -X POST http://localhost:3000/optimize-energy \
+curl -X POST https://smart-campus-seven-hazel.vercel.app/optimize-energy \
   -H "Content-Type: application/json" \
   -d '{
-    "scenario_id": "test_scenario_001",
+    "scenario_id": "example-01",
     "operator_notes": [
-      "Solar output will drop 80% between 12:00 and 15:00 due to severe cloud cover",
-      "Keep at least 40 kWh reserve in the battery between 18:00 and 22:00 for evening emergency readiness"
+      "Facilities will wash rooftop solar panels from noon until 2 PM. Usable solar should be treated as 25% of forecast.",
+      "The sports office moved next month registration deadline."
     ],
     "hours": [
-      {"hour": 0, "demand_kwh": 30.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 4.5},
-      {"hour": 1, "demand_kwh": 28.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 4.5},
-      {"hour": 2, "demand_kwh": 25.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 4.5},
-      {"hour": 3, "demand_kwh": 25.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 4.5},
-      {"hour": 4, "demand_kwh": 26.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 4.5},
-      {"hour": 5, "demand_kwh": 32.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 4.5},
-      {"hour": 6, "demand_kwh": 45.0, "solar_kwh": 5.0, "tariff_bdt_per_kwh": 6.0},
-      {"hour": 7, "demand_kwh": 60.0, "solar_kwh": 15.0, "tariff_bdt_per_kwh": 6.0},
-      {"hour": 8, "demand_kwh": 75.0, "solar_kwh": 35.0, "tariff_bdt_per_kwh": 6.0},
-      {"hour": 9, "demand_kwh": 85.0, "solar_kwh": 55.0, "tariff_bdt_per_kwh": 6.0},
-      {"hour": 10, "demand_kwh": 90.0, "solar_kwh": 70.0, "tariff_bdt_per_kwh": 6.0},
-      {"hour": 11, "demand_kwh": 95.0, "solar_kwh": 80.0, "tariff_bdt_per_kwh": 6.0},
-      {"hour": 12, "demand_kwh": 90.0, "solar_kwh": 85.0, "tariff_bdt_per_kwh": 8.5},
-      {"hour": 13, "demand_kwh": 85.0, "solar_kwh": 80.0, "tariff_bdt_per_kwh": 8.5},
-      {"hour": 14, "demand_kwh": 80.0, "solar_kwh": 70.0, "tariff_bdt_per_kwh": 8.5},
-      {"hour": 15, "demand_kwh": 75.0, "solar_kwh": 50.0, "tariff_bdt_per_kwh": 8.5},
-      {"hour": 16, "demand_kwh": 70.0, "solar_kwh": 30.0, "tariff_bdt_per_kwh": 8.5},
-      {"hour": 17, "demand_kwh": 75.0, "solar_kwh": 10.0, "tariff_bdt_per_kwh": 10.0},
-      {"hour": 18, "demand_kwh": 90.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 12.0},
-      {"hour": 19, "demand_kwh": 95.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 12.0},
-      {"hour": 20, "demand_kwh": 90.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 12.0},
-      {"hour": 21, "demand_kwh": 80.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 10.0},
-      {"hour": 22, "demand_kwh": 60.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 6.0},
-      {"hour": 23, "demand_kwh": 40.0, "solar_kwh": 0.0, "tariff_bdt_per_kwh": 4.5}
+      {"hour": 0, "demand_kwh": 90, "solar_kwh": 0, "tariff_bdt_per_kwh": 6},
+      {"hour": 1, "demand_kwh": 85, "solar_kwh": 0, "tariff_bdt_per_kwh": 6},
+      {"hour": 2, "demand_kwh": 80, "solar_kwh": 0, "tariff_bdt_per_kwh": 5},
+      {"hour": 3, "demand_kwh": 80, "solar_kwh": 0, "tariff_bdt_per_kwh": 5},
+      {"hour": 4, "demand_kwh": 85, "solar_kwh": 0, "tariff_bdt_per_kwh": 5},
+      {"hour": 5, "demand_kwh": 95, "solar_kwh": 0, "tariff_bdt_per_kwh": 6},
+      {"hour": 6, "demand_kwh": 110, "solar_kwh": 5, "tariff_bdt_per_kwh": 8},
+      {"hour": 7, "demand_kwh": 130, "solar_kwh": 20, "tariff_bdt_per_kwh": 10},
+      {"hour": 8, "demand_kwh": 150, "solar_kwh": 50, "tariff_bdt_per_kwh": 12},
+      {"hour": 9, "demand_kwh": 165, "solar_kwh": 90, "tariff_bdt_per_kwh": 14},
+      {"hour": 10, "demand_kwh": 175, "solar_kwh": 130, "tariff_bdt_per_kwh": 16},
+      {"hour": 11, "demand_kwh": 180, "solar_kwh": 160, "tariff_bdt_per_kwh": 16},
+      {"hour": 12, "demand_kwh": 185, "solar_kwh": 180, "tariff_bdt_per_kwh": 15},
+      {"hour": 13, "demand_kwh": 180, "solar_kwh": 170, "tariff_bdt_per_kwh": 14},
+      {"hour": 14, "demand_kwh": 170, "solar_kwh": 140, "tariff_bdt_per_kwh": 13},
+      {"hour": 15, "demand_kwh": 165, "solar_kwh": 90, "tariff_bdt_per_kwh": 14},
+      {"hour": 16, "demand_kwh": 170, "solar_kwh": 45, "tariff_bdt_per_kwh": 18},
+      {"hour": 17, "demand_kwh": 185, "solar_kwh": 10, "tariff_bdt_per_kwh": 22},
+      {"hour": 18, "demand_kwh": 205, "solar_kwh": 0, "tariff_bdt_per_kwh": 28},
+      {"hour": 19, "demand_kwh": 215, "solar_kwh": 0, "tariff_bdt_per_kwh": 30},
+      {"hour": 20, "demand_kwh": 205, "solar_kwh": 0, "tariff_bdt_per_kwh": 26},
+      {"hour": 21, "demand_kwh": 175, "solar_kwh": 0, "tariff_bdt_per_kwh": 18},
+      {"hour": 22, "demand_kwh": 135, "solar_kwh": 0, "tariff_bdt_per_kwh": 10},
+      {"hour": 23, "demand_kwh": 105, "solar_kwh": 0, "tariff_bdt_per_kwh": 7}
     ],
     "battery": {
-      "capacity_kwh": 200.0,
-      "initial_energy_kwh": 50.0,
-      "minimum_energy_kwh": 20.0,
-      "max_charge_kwh_per_hour": 50.0,
-      "max_discharge_kwh_per_hour": 50.0
+      "capacity_kwh": 220,
+      "initial_energy_kwh": 110,
+      "minimum_energy_kwh": 40,
+      "max_charge_kwh_per_hour": 50,
+      "max_discharge_kwh_per_hour": 50
     }
   }'
 ```
 
 ---
 
-## Deployment to Vercel
+## Pipeline Architecture
 
-The repository is configured out-of-the-box for Vercel Serverless Functions:
-1. Push this repository to GitHub / GitLab.
-2. In the **Vercel Dashboard**:
-   - Import the repository.
-   - Framework Preset: **Other**.
-   - Build Command: `npm run build`
-   - Output Directory: (leave blank / default)
-3. Under **Settings -> Environment Variables**, add:
-   - `GEMINI_API_KEY`: Your Google Gemini API Key
-   - `GEMINI_MODEL`: `gemini-1.5-flash`
-4. Click **Deploy**. Vercel will route all incoming requests directly to `api/index.ts` via `vercel.json`.
+```
+POST /optimize-energy
+  1. Zod schema validation → 400 on failure
+  2. LLM interpretation (Gemini) → structured directives
+  3. Deterministic guardrail sanitization → safe directives
+  4. LP optimization (24h, min cost) → hourly plan
+  5. Plan replay + totals recomputation → response
+```
+
+### LLM Layer — Model and Hedging Strategy
+
+- **Provider:** Google Gemini via `@google/generative-ai`
+- **Primary model:** `GEMINI_MODEL` env var (default: `gemini-3.5-flash`)
+- **Hedging:** Primary model starts immediately. If no valid JSON response after **3 seconds**, secondary model is started in parallel. First valid response wins.
+- **Per-model timeout:** 6 seconds
+- **Total LLM hard cap:** 12 seconds
+- **Max candidates:** 3 models
+
+### Regex Fallback (Last Resort Only)
+
+If **all** LLM model attempts fail (API down, key invalid, all 503), a deterministic regex parser handles the notes. It covers:
+- `solar_reduction` — percent drop/remaining → factor
+- `no_charge_window` / `no_discharge_window`
+- `minimum_battery_reserve` (kWh from note)
+- `max_grid_window`
+- Time windows: 12h (1 PM to 3 PM), 24h (13:00), overnight wrap, "until" keyword
+
+**The LLM is always the primary interpreter. The regex fallback only activates on complete LLM failure.**
+
+### Guardrails
+
+Every directive from the LLM is sanitized before reaching the optimizer:
+- Invalid/unknown directive type → `no_op`
+- Out-of-range hours → filtered/re-sorted
+- `factor` outside `[0,1]` → clamped
+- Missing `structured_adjustment` for non-no_op → `no_op`
+- Duplicate `note_index` → first occurrence kept
+
+### Optimizer (Linear Programming)
+
+- **Library:** `javascript-lp-solver ^0.4.24`
+- **Variables per hour:** `grid`, `solar`, `charge`, `discharge`, `soc`
+- **Objective:** minimize `SUM(grid_h × tariff_h)`
+- **Constraints:** energy balance, solar bound, battery rate limits, SOC bounds, end-of-day neutrality (`soc_23 == initial_energy_kwh`)
+- **Infeasibility handling:** relaxes end-of-day by ±0.01 kWh; throws on persistent infeasibility → 500
 
 ---
 
-## Docker Container Fallback
+## Testing
 
-To build and run the standalone container:
-
+### Integration test (both endpoints)
 ```bash
-# Build the Docker image
-docker build -t smart-campus-optimizer .
+npm test
+```
 
-# Run the container exposing port 3000
-docker run -p 3000:3000 \
-  -e GEMINI_API_KEY="your_gemini_api_key_here" \
-  -e PORT=3000 \
-  smart-campus-optimizer
+### All 10 public sample cases (local server)
+```bash
+npm run dev &
+npm run test:samples
+# Against Vercel:
+BASE_URL=https://smart-campus-seven-hazel.vercel.app npm run test:samples
 ```
 
 ---
 
-## Known Limitations & Resilience
+## Docker
 
-- **Stateless Operation**: No database or session state is stored. Every request is isolated.
-- **LLM Graceful Degradation**: If `GEMINI_API_KEY` is not provided or Gemini encounters rate limiting/timeouts, the service falls back deterministically to safe `no_op` directives without failing the optimization solve.
-- **Strict 30s Budget**: The LLM call has a 15-second timeout window and LP solving completes in under 50ms, ensuring full compliance with the 30-second judge harness limit.
+```bash
+# Build
+docker build -t gridwise-optimizer:latest .
+
+# Run (inject secrets at runtime — never bake them in)
+docker run -p 3000:3000 \
+  -e GEMINI_API_KEY="your-key-here" \
+  -e GEMINI_MODEL="gemini-3.5-flash" \
+  gridwise-optimizer:latest
+
+# Verify
+curl http://localhost:3000/health
+```
+
+### Push to Docker Hub
+```bash
+docker tag gridwise-optimizer:latest <your-dockerhub-username>/gridwise-optimizer:latest
+docker push <your-dockerhub-username>/gridwise-optimizer:latest
+```
+
+### Push to GitHub Container Registry (GHCR)
+```bash
+echo $GITHUB_TOKEN | docker login ghcr.io -u <your-github-username> --password-stdin
+docker tag gridwise-optimizer:latest ghcr.io/<your-github-username>/gridwise-optimizer:latest
+docker push ghcr.io/<your-github-username>/gridwise-optimizer:latest
+```
+
+---
+
+## Known Limitations
+
+- **Percentage reserve vs. absolute kWh:** The LLM is given the battery `capacity_kwh` in the prompt context and instructed to convert. Hidden test notes using unusual percentage phrasings may still be misinterpreted.
+- **Gemini model availability is volatile:** If all candidate models are simultaneously unavailable (503), the regex fallback activates. The regex fallback does not match all possible natural-language phrasings.
+- **LP is continuous, not integer:** Charge/discharge are netted before output; simultaneous use is mathematically prevented by netting, but the LP itself has no binary exclusivity constraint.
+- **Timeout budget:** Total LLM phase is capped at 12s. LP solves in <50ms. Vercel `maxDuration` is 30s.
+- **No caching:** Every request makes a fresh Gemini call. High-frequency identical requests will incur full LLM latency.
+
+---
+
+## Credits
+
+- **Express** — HTTP framework
+- **Zod** — runtime request schema validation
+- **javascript-lp-solver** — 24-hour linear program solver
+- **@google/generative-ai** — Google Gemini LLM SDK
+- **Google Gemini** — LLM backbone for operator note interpretation
+- **AI coding assistant** — Antigravity (Google DeepMind) assisted with architecture and implementation
